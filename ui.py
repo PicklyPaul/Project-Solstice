@@ -21,7 +21,26 @@ USER_END = ""
 
 
 def get_terrain_horizon(az_deg, lat_deg, lon_deg):
-    """Generates the jagged lunar crater-rim horizon profile (degrees) for the sky-dome."""
+    """
+    Reads the real NASA LOLA 360° horizon profile from 'horizon_360.csv' if available.
+    Falls back to a procedural horizon model only when running offline without LOLA data.
+    """
+    h_file = os.path.join(os.getcwd(), "horizon_360.csv")
+    if os.path.exists(h_file):
+        try:
+            az_list = []
+            el_list = []
+            with open(h_file, mode="r", newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    az_list.append(float(row["AZ"]))
+                    el_list.append(float(row["Terrain_EL"]))
+            if len(az_list) >= 2:
+                return np.interp(np.asarray(az_deg) % 360.0, np.array(az_list), np.array(el_list), period=360.0)
+        except Exception:
+            pass
+
+    # Offline fallback procedural terrain
     rad = np.deg2rad(az_deg)
     seed = abs(lat_deg * 0.3 + lon_deg * 0.1) + 1.2
     base = -0.3 if abs(lat_deg) > 75 else 0.1
@@ -50,25 +69,37 @@ class LunarCSVViewerApp(tk.Tk):
         self.current_idx = 0
         self.csv_path = os.path.join(os.getcwd(), "epher.csv")
 
-        # Animation state
+        # Animation & logo state
         self.is_playing = False
         self.play_speed = 1
         self.pulse_phase = 0.0
         self.stars = []
+        self.logo_img = None
 
+        self._load_optional_logo()
         self._setup_styles()
         self._build_ui()
         self._init_starfield()
         self._animate_hud()
 
+    def _load_optional_logo(self):
+        """Loads 'spaceapps_logo.png' if present in the folder; otherwise draws the vector emblem."""
+        logo_path = os.path.join(os.getcwd(), "spaceapps_logo.png")
+        if os.path.exists(logo_path):
+            try:
+                raw_img = tk.PhotoImage(file=logo_path)
+                scale = max(1, raw_img.height() // 48)
+                self.logo_img = raw_img.subsample(scale, scale)
+            except Exception:
+                self.logo_img = None
+
     def _setup_styles(self):
         style = ttk.Style(self)
         style.theme_use("clam")
 
-        # Translucent-effect "Frosted Dark Glass" palette blended into #03050c space backdrop
         bg_main = "#03050c"
-        bg_panel = "#070c18"   # ~85% dark glass over #03050c
-        bg_card = "#0c1426"    # ~75% inner glass card
+        bg_panel = "#070c18"
+        bg_card = "#0c1426"
         fg_text = "#f8fafc"
 
         style.configure("TFrame", background=bg_main)
@@ -94,11 +125,11 @@ class LunarCSVViewerApp(tk.Tk):
 
     def _build_ui(self):
         # --- ANIMATED SPACE HEADER BANNER ---
-        self.header_canvas = tk.Canvas(self, height=64, bg="#03050c", highlightthickness=0)
+        self.header_canvas = tk.Canvas(self, height=68, bg="#03050c", highlightthickness=0)
         self.header_canvas.pack(fill="x", padx=16, pady=(10, 8))
 
         btn_frame = tk.Frame(self.header_canvas, bg="#03050c")
-        self.header_canvas.create_window(1285, 32, window=btn_frame, anchor="e")
+        self.header_canvas.create_window(1285, 34, window=btn_frame, anchor="e")
 
         ttk.Button(btn_frame, text="[+] Sample epher.csv", style="Secondary.TButton", command=self._create_sample_csv).pack(side="left", padx=(0, 8))
         ttk.Button(btn_frame, text="[📂] Load CSV", style="Secondary.TButton", command=self._browse_csv).pack(side="left")
@@ -112,7 +143,7 @@ class LunarCSVViewerApp(tk.Tk):
         left_panel.pack(side="left", fill="y", padx=(0, 12))
         left_panel.pack_propagate(False)
 
-        # 1. Coordinate & Date Input Box (Translucent HUD border + frosted interior)
+        # 1. Coordinate & Date Input Box
         input_border = tk.Frame(left_panel, bg="#1d4ed8", padx=1, pady=1)
         input_border.pack(fill="x", pady=(0, 10))
         input_box = ttk.Frame(input_border, style="Panel.TFrame", padding=12)
@@ -150,7 +181,7 @@ class LunarCSVViewerApp(tk.Tk):
         self.end_var = tk.StringVar(value="2026-12-14")
         tk.Entry(end_frame, textvariable=self.end_var, bg="#0c1426", fg="#e2e8f0", insertbackground="#38bdf8", relief="flat", highlightthickness=1, highlightbackground="#1e3a5f", font=("Consolas", 10)).pack(fill="x", ipady=4)
 
-        self.apply_btn = ttk.Button(input_box, text="🚀 ACQUIRE TELEMETRY & LOAD", command=self._on_apply_inputs)
+        self.apply_btn = ttk.Button(input_box, text="ACQUIRE TELEMETRY & LOAD", command=self._on_apply_inputs)
         self.apply_btn.pack(fill="x", pady=(0, 8))
 
         self.progress_bar = ttk.Progressbar(input_box, orient="horizontal", mode="indeterminate", style="Space.Horizontal.TProgressbar")
@@ -269,21 +300,58 @@ class LunarCSVViewerApp(tk.Tk):
         self._draw_empty_charts()
 
     # =========================================================================
-    # ANIMATED SPACE HEADER & MISSION PLAYBACK
+    # NASA SPACE APPS EMBLEM & ANIMATED SPACE HEADER
     # =========================================================================
+    def _draw_nasa_space_apps_logo(self, x, y):
+        """Renders the NASA Space Apps Challenge emblem on the top-left header canvas."""
+        if self.logo_img is not None:
+            self.header_canvas.create_image(x + 26, y + 25, image=self.logo_img, tags="hud")
+            return
+
+        # 1. Deep Cosmic Navy Circular Badge with dual orbital borders
+        self.header_canvas.create_oval(
+            x + 1, y + 1, x + 51, y + 51,
+            fill="#071739", outline="#2E96F5", width=1.6, tags="hud"
+        )
+        self.header_canvas.create_oval(
+            x + 4, y + 4, x + 48, y + 48,
+            fill="", outline="#0960E1", width=1.0, tags="hud"
+        )
+
+        # 2. Tilted Cyan/Blue Orbital Swoosh Ring
+        self.header_canvas.create_arc(
+            x - 4, y + 15, x + 56, y + 38,
+            start=165, extent=210, style="arc", outline="#00B4D8", width=2.2, tags="hud"
+        )
+
+        # 3. Stylized Space Apps 'A' Peak + Red/Orange Accent Swoop
+        self.header_canvas.create_line(
+            x + 13, y + 40, x + 26, y + 9, x + 39, y + 40,
+            fill="#ffffff", width=2.8, capstyle="round", joinstyle="round", tags="hud"
+        )
+        self.header_canvas.create_arc(
+            x + 8, y + 22, x + 45, y + 35,
+            start=195, extent=155, style="arc", outline="#E43700", width=2.4, tags="hud"
+        )
+
+        # 4. Crisp 4-Point Star Sparkles
+        for sx, sy, r in [(x + 13, y + 14, 2.8), (x + 40, y + 16, 2.0)]:
+            self.header_canvas.create_line(sx - r, sy, sx + r, sy, fill="#ffffff", width=1.2, tags="hud")
+            self.header_canvas.create_line(sx, sy - r, sx, sy + r, fill="#ffffff", width=1.2, tags="hud")
+
     def _init_starfield(self):
         rng = random.Random(42)
         for _ in range(75):
             self.stars.append({
                 "x": rng.uniform(0, 1400),
-                "y": rng.uniform(4, 60),
+                "y": rng.uniform(4, 62),
                 "size": rng.choice([1, 1.5, 2.2]),
                 "speed": rng.uniform(0.15, 0.65),
                 "color": rng.choice(["#ffffff", "#bae6fd", "#fef08a", "#94a3b8"])
             })
 
     def _animate_hud(self):
-        """Continuously animates the top starfield banner and pulses active beacons."""
+        """Continuously animates the top starfield banner and updates playback."""
         self.pulse_phase += 0.14
         w = max(self.header_canvas.winfo_width(), 1280)
 
@@ -296,21 +364,17 @@ class LunarCSVViewerApp(tk.Tk):
                 fill=s["color"], outline="", tags="hud"
             )
 
-        self.header_canvas.create_oval(14, 14, 50, 50, fill="#070c18", outline="#38bdf8", width=1.5, tags="hud")
-        pulse_r = 4 + 2.5 * math.sin(self.pulse_phase)
-        self.header_canvas.create_oval(
-            32 - pulse_r, 32 - pulse_r, 32 + pulse_r, 32 + pulse_r,
-            fill="#38bdf8", outline="", tags="hud"
-        )
+        # Render NASA Space Apps emblem in the top-left corner
+        self._draw_nasa_space_apps_logo(12, 8)
 
         self.header_canvas.create_text(
-            62, 23, text="PROJECT SOLSTICE: Lunar Landing Site Assesment",
+            74, 23, text="PROJECT SOLSTICE: Lunar Landing Site Assessment",
             fill="#ffffff", font=("Consolas", 13, "bold"), anchor="w", tags="hud"
         )
-        status_txt = "● ORBITAL PLAYBACK ACTIVE" if self.is_playing else "● TELEMETRY LINK READY // JPL HORIZONS + LOLA"
+        status_txt = "● ORBITAL PLAYBACK ACTIVE" if self.is_playing else "● TELEMETRY LINK READY // JPL HORIZONS + LOLA DEM"
         status_col = "#34d399" if self.is_playing else "#38bdf8"
         self.header_canvas.create_text(
-            62, 43, text=status_txt,
+            74, 43, text=status_txt,
             fill=status_col, font=("Consolas", 8, "bold"), anchor="w", tags="hud"
         )
 
@@ -377,12 +441,7 @@ class LunarCSVViewerApp(tk.Tk):
     def _run_backend_task(self):
         global USER_X, USER_Y, USER_START, USER_END
         try:
-            # Comment line 1: USER_X, USER_Y, USER_START, and USER_END now hold the user's inputs.
-            # Comment line 2: Insert or call your NASA Horizons extrapolation script here.
             Horizon(USER_X, USER_Y, lunar_elev(USER_Y, USER_X), USER_START, USER_END, 10)
-            # Comment line 3: Pass USER_X, USER_Y, USER_START, and USER_END into your script.
-            # Comment line 4: Ensure your script writes its output to "epher.csv" in this folder.
-            # Comment line 5: The code below will automatically load "epher.csv" for all calculations.
 
             epher_file = os.path.join(os.getcwd(), "epher.csv")
             if os.path.exists(epher_file):
@@ -411,7 +470,7 @@ class LunarCSVViewerApp(tk.Tk):
             self.load_csv(path)
 
     def load_csv(self, filepath):
-        """Parses a CSV with headers: ',datetime_str, EL, AZ' (and optional 'Earth_EL, Earth_AZ')"""
+        """Parses epher.csv including Earth ephemeris and real NASA LOLA terrain columns."""
         parsed_rows = []
         try:
             with open(filepath, mode="r", newline="", encoding="utf-8-sig") as f:
@@ -425,6 +484,9 @@ class LunarCSVViewerApp(tk.Tk):
                     raise ValueError(f"CSV missing required headers. Found: {reader.fieldnames}")
 
                 has_earth = {"Earth_EL", "Earth_AZ"}.issubset(header_map.keys())
+                has_terrain = "Terrain_EL" in header_map
+                has_earth_terrain = "Earth_Terrain_EL" in header_map
+                has_elev = "Site_Elev_M" in header_map
 
                 for i, raw_row in enumerate(reader):
                     dt_str = raw_row[header_map["datetime_str"]].strip()
@@ -433,6 +495,9 @@ class LunarCSVViewerApp(tk.Tk):
 
                     earth_el = float(raw_row[header_map["Earth_EL"]].strip()) if has_earth else None
                     earth_az = float(raw_row[header_map["Earth_AZ"]].strip()) if has_earth else None
+                    terrain_el = float(raw_row[header_map["Terrain_EL"]].strip()) if has_terrain else None
+                    earth_terrain_el = float(raw_row[header_map["Earth_Terrain_EL"]].strip()) if has_earth_terrain else terrain_el
+                    site_elev = float(raw_row[header_map["Site_Elev_M"]].strip()) if has_elev else None
 
                     idx_key = header_map.get("", None)
                     row_idx = raw_row[idx_key].strip() if idx_key and raw_row[idx_key].strip() else str(i)
@@ -443,7 +508,10 @@ class LunarCSVViewerApp(tk.Tk):
                         "EL": el_val,
                         "AZ": az_val,
                         "Earth_EL": earth_el,
-                        "Earth_AZ": earth_az
+                        "Earth_AZ": earth_az,
+                        "Terrain_EL": terrain_el,
+                        "Earth_Terrain_EL": earth_terrain_el,
+                        "Site_Elev_M": site_elev
                     })
         except Exception as e:
             messagebox.showerror("CSV Load Error", f"Could not read CSV file:\n{e}")
@@ -457,8 +525,9 @@ class LunarCSVViewerApp(tk.Tk):
         self.rows = parsed_rows
         self.current_idx = 0
 
+        elev_str = f" | Elev: {parsed_rows[0]['Site_Elev_M']:+.0f}m" if parsed_rows[0].get("Site_Elev_M") is not None else ""
         self.file_status_lbl.config(
-            text=f"LOCKED // {len(self.rows)} epochs @ ({USER_X}°, {USER_Y}°)",
+            text=f"LOCKED // {len(self.rows)} epochs @ ({USER_X}°, {USER_Y}°){elev_str}",
             foreground="#34d399"
         )
 
@@ -468,62 +537,115 @@ class LunarCSVViewerApp(tk.Tk):
         self._evaluate_landing_site()
         self._select_row(0)
 
+    def _get_horizon_profile(self, query_az_deg):
+        """
+        Uses the exact 360° NASA LOLA horizon profile from 'horizon_360.csv' or the CSV's
+        Terrain_EL points, falling back to procedural terrain only if no LOLA data exists.
+        """
+        h_file = os.path.join(os.getcwd(), "horizon_360.csv")
+        if os.path.exists(h_file) and self.rows and self.rows[0].get("Terrain_EL") is not None:
+            return get_terrain_horizon(query_az_deg, USER_Y, USER_X)
+
+        if self.rows and self.rows[0].get("Terrain_EL") is not None:
+            known_az = np.array([r["AZ"] % 360.0 for r in self.rows])
+            known_el = np.array([r["Terrain_EL"] for r in self.rows])
+            if self.rows[0].get("Earth_Terrain_EL") is not None:
+                e_az = np.array([r["Earth_AZ"] % 360.0 for r in self.rows])
+                e_el = np.array([r["Earth_Terrain_EL"] for r in self.rows])
+                known_az = np.concatenate([known_az, e_az])
+                known_el = np.concatenate([known_el, e_el])
+
+            order = np.argsort(known_az)
+            return np.interp(np.asarray(query_az_deg) % 360.0, known_az[order], known_el[order], period=360.0)
+
+        return get_terrain_horizon(query_az_deg, USER_Y, USER_X)
+
     def _evaluate_landing_site(self):
-        """Analyzes Sun & Earth EL values across the CSV to determine if the landing site is optimal."""
+        """Evaluates landing site suitability using Artemis-grade illumination, DTE comms, and eclipse limits."""
         el_values = [r["EL"] for r in self.rows]
         az_values = [r["AZ"] for r in self.rows]
-        terrain_mask = get_terrain_horizon(np.array(az_values), USER_Y, USER_X)
+
+        if self.rows[0].get("Terrain_EL") is not None:
+            terrain_mask = np.array([r["Terrain_EL"] for r in self.rows])
+        else:
+            terrain_mask = self._get_horizon_profile(np.array(az_values))
 
         total_steps = len(el_values)
-        sun_up_steps = sum(1 for el, rim in zip(el_values, terrain_mask) if el > rim)
-        sun_vis_pct = (sun_up_steps / total_steps) * 100.0
+        sun_up_flags = [el > rim for el, rim in zip(el_values, terrain_mask)]
+        sun_vis_pct = (sum(sun_up_flags) / total_steps) * 100.0
         max_el = max(el_values)
+
+        # Determine time step duration in hours
+        step_hours = 6.0
+        if len(self.rows) >= 2:
+            for fmt in ("%Y-%b-%d %H:%M", "%Y-%m-%d %H:%M"):
+                try:
+                    t0 = datetime.strptime(self.rows[0]["datetime_str"], fmt)
+                    t1 = datetime.strptime(self.rows[1]["datetime_str"], fmt)
+                    diff = abs((t1 - t0).total_seconds()) / 3600.0
+                    if diff > 0:
+                        step_hours = diff
+                    break
+                except ValueError:
+                    continue
+
+        # Longest continuous solar eclipse in hours
+        max_blackout_steps = 0
+        curr_streak = 0
+        for is_lit in sun_up_flags:
+            if not is_lit:
+                curr_streak += 1
+                max_blackout_steps = max(max_blackout_steps, curr_streak)
+            else:
+                curr_streak = 0
+        max_eclipse_hrs = max_blackout_steps * step_hours
 
         has_earth = self.rows[0]["Earth_EL"] is not None
         if has_earth:
             e_el_values = [r["Earth_EL"] for r in self.rows]
             e_az_values = [r["Earth_AZ"] for r in self.rows]
-            e_terrain_mask = get_terrain_horizon(np.array(e_az_values), USER_Y, USER_X)
-            earth_up_steps = sum(1 for el, rim in zip(e_el_values, e_terrain_mask) if el > rim)
-            earth_vis_pct = (earth_up_steps / total_steps) * 100.0
+            if self.rows[0].get("Earth_Terrain_EL") is not None:
+                e_terrain_mask = np.array([r["Earth_Terrain_EL"] for r in self.rows])
+            else:
+                e_terrain_mask = self._get_horizon_profile(np.array(e_az_values))
+
+            earth_up_flags = [el > rim for el, rim in zip(e_el_values, e_terrain_mask)]
+            earth_vis_pct = (sum(earth_up_flags) / total_steps) * 100.0
+            overlap_pct = (sum(1 for s, e in zip(sun_up_flags, earth_up_flags) if s and e) / total_steps) * 100.0
+
             self.verdict_stats_lbl.config(
-                text=f"SUN VIS: {sun_vis_pct:.1f}%  |  EARTH DTE: {earth_vis_pct:.1f}%  |  PEAK: {max_el:+.1f}°"
+                text=f"SUN: {sun_vis_pct:.0f}% | DTE: {earth_vis_pct:.0f}% | MAX DARK: {max_eclipse_hrs:.0f}h"
             )
         else:
             earth_vis_pct = 100.0
+            overlap_pct = sun_vis_pct
             self.verdict_stats_lbl.config(
-                text=f"SUN VISIBILITY: {sun_vis_pct:.1f}%  |  PEAK EL: {max_el:+.2f}°"
+                text=f"SUN VIS: {sun_vis_pct:.1f}% | MAX ECLIPSE: {max_eclipse_hrs:.0f} hrs"
             )
 
-        max_blackout_steps = 0
-        curr_streak = 0
-        for el, rim in zip(el_values, terrain_mask):
-            if el <= rim:
-                curr_streak += 1
-                max_blackout_steps = max(max_blackout_steps, curr_streak)
-            else:
-                curr_streak = 0
+        elev_m = self.rows[0].get("Site_Elev_M")
+        elev_note = f" (LOLA Elev: {elev_m:+.0f}m)" if elev_m is not None else ""
 
-        if sun_vis_pct >= 70.0 and earth_vis_pct >= 60.0:
-            self.verdict_badge_lbl.config(text="★ OPTIMAL LANDING SITE", foreground="#34d399")
+        if sun_vis_pct >= 70.0 and earth_vis_pct >= 65.0 and max_eclipse_hrs <= 125.0:
+            self.verdict_badge_lbl.config(text="★ OPTIMAL (ARTEMIS-GRADE SITE)", foreground="#34d399")
             description = (
-                f"This site clears local terrain for {sun_vis_pct:.1f}% of the solar cycle (peak {max_el:+.2f}°) "
-                f"and maintains Direct-to-Earth (DTE) comms for {earth_vis_pct:.1f}% of the window. Strong power "
-                f"and communication availability make this a prime candidate."
+                f"PASS{elev_note}: Solar illumination ({sun_vis_pct:.1f}%) and Direct-to-Earth comms ({earth_vis_pct:.1f}%) "
+                f"exceed mission thresholds, with {overlap_pct:.1f}% simultaneous power + telemetry overlap. "
+                f"Longest continuous shadow is {max_eclipse_hrs:.0f} hrs—within 96-hr lander battery limits."
             )
-        elif sun_vis_pct >= 35.0 and max_el > 0.0:
-            self.verdict_badge_lbl.config(text="▲ MARGINAL / CONDITIONAL SITE", foreground="#fbbf24")
+        elif sun_vis_pct >= 40.0 and earth_vis_pct >= 35.0 and max_eclipse_hrs <= 168.0:
+            self.verdict_badge_lbl.config(text="▲ CONDITIONAL (BATTERY / RELAY REQ)", foreground="#fbbf24")
             description = (
-                f"This site receives direct sunlight for {sun_vis_pct:.1f}% of the window and Earth line-of-sight "
-                f"for {earth_vis_pct:.1f}% (longest solar eclipse: {max_blackout_steps} intervals). Feasible with "
-                f"battery storage or relay support during terrain occlusions."
+                f"CAUTION{elev_note}: Site achieves {sun_vis_pct:.1f}% sunlight and {earth_vis_pct:.1f}% Earth DTE visibility "
+                f"(peak solar angle {max_el:+.1f}°), but experiences a continuous {max_eclipse_hrs:.0f}-hr shadow. "
+                f"Viable for landers with extended hibernation batteries or orbital relay support."
             )
         else:
-            self.verdict_badge_lbl.config(text="✖ NOT OPTIMAL (HIGH OCCLUSION)", foreground="#fb7185")
+            self.verdict_badge_lbl.config(text="✖ UNSUITABLE (CRITICAL BLACKOUT)", foreground="#fb7185")
             description = (
-                f"Surrounding terrain blocks sunlight for {100.0 - sun_vis_pct:.1f}% of the mission window "
-                f"(Earth DTE visibility: {earth_vis_pct:.1f}%). Extended shadows and communication dropouts make "
-                f"this site unsuitable without orbital relay assets."
+                f"FAIL{elev_note}: High terrain occlusion limits sunlight to {sun_vis_pct:.1f}% and Earth DTE to {earth_vis_pct:.1f}%, "
+                f"with a {max_eclipse_hrs:.0f}-hr continuous eclipse exceeding standard thermal/battery survival limits. "
+                f"Recommend shifting target coordinates toward an elevated crater rim."
             )
 
         self.verdict_desc_lbl.config(text=description)
@@ -531,6 +653,14 @@ class LunarCSVViewerApp(tk.Tk):
     def _create_sample_csv(self):
         """Generates a sample 'epher.csv' with both Sun and Earth columns for offline testing."""
         sample_path = os.path.join(os.getcwd(), "epher.csv")
+        # Remove stale horizon_360.csv if generating offline sample data
+        h_file = os.path.join(os.getcwd(), "horizon_360.csv")
+        if os.path.exists(h_file):
+            try:
+                os.remove(h_file)
+            except Exception:
+                pass
+
         try:
             start = datetime.strptime(self.start_var.get().strip(), "%Y-%m-%d")
         except ValueError:
@@ -550,7 +680,7 @@ class LunarCSVViewerApp(tk.Tk):
                     f"{sun_el:.4f}", f"{sun_az:.4f}",
                     f"{earth_el:.4f}", f"{earth_az:.4f}"
                 ])
-        self._on_apply_inputs()
+        self.load_csv(sample_path)
 
     # =========================================================================
     # UI INTERACTION & RENDERING
@@ -573,7 +703,7 @@ class LunarCSVViewerApp(tk.Tk):
 
         el = row["EL"]
         az = row["AZ"]
-        sun_rim = get_terrain_horizon(az, USER_Y, USER_X)
+        sun_rim = row["Terrain_EL"] if row.get("Terrain_EL") is not None else float(self._get_horizon_profile(az))
         sun_up = el > sun_rim
 
         self.dt_display_lbl.config(text=f"UTC EPOCH: {row['datetime_str']}")
@@ -586,7 +716,7 @@ class LunarCSVViewerApp(tk.Tk):
         if row["Earth_EL"] is not None:
             e_el = row["Earth_EL"]
             e_az = row["Earth_AZ"]
-            earth_rim = get_terrain_horizon(e_az, USER_Y, USER_X)
+            earth_rim = row["Earth_Terrain_EL"] if row.get("Earth_Terrain_EL") is not None else float(self._get_horizon_profile(e_az))
             earth_up = e_el > earth_rim
             self.earth_el_lbl.config(text=f"{e_el:+.2f}°")
             self.earth_status_lbl.config(
@@ -622,14 +752,17 @@ class LunarCSVViewerApp(tk.Tk):
             e_el_all = np.array([r["Earth_EL"] for r in self.rows])
 
         # =====================================================================
-        # SUBPLOT 1: 360° SKY-DOME & TERRAIN HORIZON
+        # SUBPLOT 1: 360° SKY-DOME & REAL LOLA TERRAIN HORIZON
         # =====================================================================
         self.ax_sky.clear()
         self.ax_sky.set_facecolor("#040711")
 
-        all_els = np.concatenate([el_all, e_el_all]) if has_earth else el_all
-        min_el = min(float(np.min(all_els)) - 2.0, -8.0 if is_polar else -25.0)
-        max_el = max(float(np.max(all_els)) + 3.0, 14.0 if is_polar else 75.0)
+        az_grid = np.linspace(0, 360, 361)
+        terrain_el = self._get_horizon_profile(az_grid)
+
+        all_els = np.concatenate([el_all, e_el_all, terrain_el]) if has_earth else np.concatenate([el_all, terrain_el])
+        min_el = min(float(np.min(all_els)) - 1.5, -6.0 if is_polar else -25.0)
+        max_el = max(float(np.max(all_els)) + 2.5, 14.0 if is_polar else 75.0)
 
         self.ax_sky.set_xlim(0, 360)
         self.ax_sky.set_ylim(min_el, max_el)
@@ -637,8 +770,10 @@ class LunarCSVViewerApp(tk.Tk):
         self.ax_sky.set_xticklabels(["N (0°)", "E (90°)", "S (180°)", "W (270°)", "N (360°)"], color="#7dd3fc", fontsize=8, fontfamily="monospace")
         self.ax_sky.tick_params(axis="y", colors="#7dd3fc", labelsize=8)
         self.ax_sky.set_ylabel("ELEVATION (°)", color="#7dd3fc", fontsize=8, fontfamily="monospace")
+
+        data_source_tag = "NASA LOLA DEM" if cur_row.get("Terrain_EL") is not None else "SYNTHETIC PROFILE"
         self.ax_sky.set_title(
-            f"360° LOCAL TERRAIN HORIZON & SKY-DOME // SITE ({USER_X}°, {USER_Y}°)",
+            f"360° TERRAIN HORIZON & SKY-DOME // SITE ({USER_X}°, {USER_Y}°) [{data_source_tag}]",
             color="#f8fafc", fontsize=9.5, fontweight="bold", fontfamily="monospace", loc="left"
         )
         self.ax_sky.grid(True, color="#0f1b33", linestyle="--", linewidth=0.6)
@@ -666,12 +801,10 @@ class LunarCSVViewerApp(tk.Tk):
             self.ax_sky.scatter([cur_row["Earth_AZ"]], [cur_row["Earth_EL"]], s=400 * pulse, color="#0ea5e9", alpha=0.18, zorder=4)
             self.ax_sky.scatter([cur_row["Earth_AZ"]], [cur_row["Earth_EL"]], s=110, color="#38bdf8", edgecolors="#e0f2fe", linewidths=1.5, zorder=4)
 
-        # Translucent Frosted Crater-Rim Terrain Silhouette (alpha=0.72 so stars & occluded bodies faintly ghost behind ridge!)
-        az_grid = np.linspace(0, 360, 361)
-        terrain_el = get_terrain_horizon(az_grid, USER_Y, USER_X)
+        # Translucent Frosted Crater-Rim Terrain Silhouette
         self.ax_sky.fill_between(az_grid, min_el, terrain_el, color="#0c192e", alpha=0.72, zorder=5)
         self.ax_sky.plot(az_grid, terrain_el, color="#38bdf8", linewidth=2.8, alpha=0.22, zorder=6)
-        self.ax_sky.plot(az_grid, terrain_el, color="#7dd3fc", linewidth=1.1, alpha=0.85, zorder=6, label="Crater Rim")
+        self.ax_sky.plot(az_grid, terrain_el, color="#7dd3fc", linewidth=1.1, alpha=0.85, zorder=6, label="LOLA Horizon")
 
         # Floating HUD Callout Badges
         self.ax_sky.annotate(
@@ -709,7 +842,11 @@ class LunarCSVViewerApp(tk.Tk):
         self.ax_timeline.grid(True, color="#0f1b33", linestyle="--", linewidth=0.6)
         self.ax_timeline.axhline(0, color="#64748b", linestyle=":", linewidth=0.8)
 
-        terrain_along_path = get_terrain_horizon(az_all, USER_Y, USER_X)
+        if cur_row.get("Terrain_EL") is not None:
+            terrain_along_path = np.array([r["Terrain_EL"] for r in self.rows])
+        else:
+            terrain_along_path = self._get_horizon_profile(az_all)
+
         is_occluded = el_all <= terrain_along_path
 
         self.ax_timeline.fill_between(
